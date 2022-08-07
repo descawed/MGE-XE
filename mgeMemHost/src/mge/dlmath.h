@@ -6,6 +6,7 @@
 
 typedef DWORD ptr32;
 
+#pragma pack(push, 4)
 struct BoundingSphere {
     D3DXVECTOR3 center;
     float radius;
@@ -44,3 +45,4 @@ struct ViewFrustum {
     Containment ContainsSphere(const BoundingSphere& sphere) const;
     Containment ContainsBox(const BoundingBox& box) const;
 };
+#pragma pack(pop)

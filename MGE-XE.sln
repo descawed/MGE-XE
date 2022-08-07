@@ -9,6 +9,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "dinput8", "dinput8.vcxproj"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MGEfuncs", "MGEfuncs\MGEfuncs.vcxproj", "{93B48CB5-5617-41C3-82C2-C3CC9E12220C}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mgeMemHost", "mgeMemHost\mgeMemHost.vcxproj", "{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -37,6 +39,12 @@ Global
 		{93B48CB5-5617-41C3-82C2-C3CC9E12220C}.Release|x64.Build.0 = Release|x64
 		{93B48CB5-5617-41C3-82C2-C3CC9E12220C}.Release|x86.ActiveCfg = Release|Win32
 		{93B48CB5-5617-41C3-82C2-C3CC9E12220C}.Release|x86.Build.0 = Release|Win32
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Debug|x64.ActiveCfg = Debug|x64
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Debug|x86.ActiveCfg = Debug|Win32
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Debug|x86.Build.0 = Debug|Win32
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Release|x64.ActiveCfg = Release|x64
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Release|x86.ActiveCfg = Release|Win32
+		{7EB7B9AD-8A0B-477B-83B4-A5851D5624EC}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

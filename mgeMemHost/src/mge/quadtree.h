@@ -4,27 +4,40 @@
 #include "memorypool.h"
 #include <vector>
 
+#pragma pack(push, 4)
+struct RenderMesh {
+    ptr32 tex;
+    D3DXMATRIX transform;
+    int verts;
+    ptr32 vBuffer;
+    int faces;
+    ptr32 iBuffer;
+    bool hasalpha;
+};
+#pragma pack(pop)
+
 struct QuadTreeMesh {
     BoundingSphere sphere;
     BoundingBox box;
 
-    IDirect3DTexture9* tex;
+    ptr32 tex;
     D3DXMATRIX transform;
     int verts;
-    IDirect3DVertexBuffer9* vBuffer;
+    ptr32 vBuffer;
     int faces;
-    IDirect3DIndexBuffer9* iBuffer;
+    ptr32 iBuffer;
     bool hasalpha;
 
     QuadTreeMesh(
         BoundingSphere b_sphere,
         BoundingBox b_box,
         D3DXMATRIX transform,
-        IDirect3DTexture9* tex,
+        ptr32 tex,
         int verts,
-        IDirect3DVertexBuffer9* vBuffer,
+        ptr32 vBuffer,
         int faces,
-        IDirect3DIndexBuffer9* iBuffer
+        ptr32 iBuffer,
+        bool hasalpha
     );
 
     ~QuadTreeMesh();
@@ -45,17 +58,9 @@ public:
     VisibleSet() {}
     ~VisibleSet() {}
 
-    void Render(
-        IDirect3DDevice9* device,
-        ID3DXEffect* effect,
-        ID3DXEffect* effectPool,
-        D3DXHANDLE* texture_handle,
-        D3DXHANDLE* hasalpha_handle,
-        D3DXHANDLE* world_matrix_handle,
-        unsigned int vertex_size );
-
     void SortByState();
     void SortByTexture();
+    void Copy(RenderMesh* meshes);
     size_t size() const {
         return visible_set.size();
     }
@@ -100,11 +105,12 @@ public:
         BoundingSphere sphere,
         BoundingBox box,
         D3DXMATRIX transform,
-        IDirect3DTexture9* tex,
+        ptr32 tex,
         int verts,
-        IDirect3DVertexBuffer9* vBuffer,
+        ptr32 vBuffer,
         int faces,
-        IDirect3DIndexBuffer9* iBuffer
+        ptr32 iBuffer,
+        bool hasalpha
     );
     bool Optimize();
     void Clear();
@@ -124,11 +130,12 @@ protected:
         BoundingSphere sphere,
         BoundingBox box,
         D3DXMATRIX transform,
-        IDirect3DTexture9* tex,
+        ptr32 tex,
         int verts,
-        IDirect3DVertexBuffer9* vBuffer,
+        ptr32 vBuffer,
         int faces,
-        IDirect3DIndexBuffer9* iBuffer
+        ptr32 iBuffer,
+        bool hasalpha
     );
 private:
     // Disallow copy and assignment

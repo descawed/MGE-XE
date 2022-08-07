@@ -128,12 +128,15 @@ void DistantLand::renderShadowLayer(int layer, float radius, const D3DXMATRIX* i
     effectShadow->CommitChanges();
 
     // Cull
-    ViewFrustum range_frustum(viewproj);
-    VisibleSet visible_set;
+    DistantShadowParameters params = {
+        *viewproj, { 0, },
+    };
+    strcpy(params.worldspace, cellname.c_str());
 
-    currentWorldSpace->NearStatics->GetVisibleMeshesCoarse(range_frustum, visible_set);
-    currentWorldSpace->FarStatics->GetVisibleMeshesCoarse(range_frustum, visible_set);
-    currentWorldSpace->VeryFarStatics->GetVisibleMeshesCoarse(range_frustum, visible_set);
+    // Cull and draw
+    DWORD command = 5, unused;
+    WriteFile(memHostPipe, &command, sizeof(command), &unused, 0);
+    WriteFile(memHostPipe, &params, sizeof(params), &unused, 0);
 
     // Clip to atlas region with viewport
     const DWORD res = Configuration.DL.ShadowResolution;
@@ -151,12 +154,16 @@ void DistantLand::renderShadowLayer(int layer, float radius, const D3DXMATRIX* i
     // Render land and statics
     effectShadow->BeginPass(PASS_RENDERSHADOWMAP);
 
+    // wait for search to finish
+    ReadFile(memHostPipe, &command, sizeof(command), &unused, 0);
+
     if (mwBridge->IsExterior()) {
         renderDistantLand(effectShadow, view, proj);
     }
 
     device->SetVertexDeclaration(StaticDecl);
-    visible_set.Render(device, effectShadow, effect, &ehTex0, &ehHasAlpha, &ehWorld, SIZEOFSTATICVERT);
+
+    visibleDistant->Render(SHADOW, device, effectShadow, effect, &ehTex0, &ehHasAlpha, &ehWorld, SIZEOFSTATICVERT);
 
     effectShadow->EndPass();
 }

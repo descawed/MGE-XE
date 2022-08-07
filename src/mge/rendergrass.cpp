@@ -10,26 +10,17 @@
 
 
 void DistantLand::cullGrass(const D3DXMATRIX* view, const D3DXMATRIX* proj) {
-    D3DXMATRIX ds_proj = *proj, ds_viewproj;
-    float zn = 4.0f, zf = nearViewRange;
+    DistantGrassParameters params = {
+        *view, *proj, nearViewRange, fogEnd, (~Configuration.MGEFlags & EXP_FOG) != 0, { 0, },
+    };
+    strcpy(params.worldspace, cellname.c_str());
 
-    // Don't draw beyond fully fogged distance; early out if frustum is empty
-    if (~Configuration.MGEFlags & EXP_FOG) {
-        zf = std::min(fogEnd, zf);
-    }
-    if (zf <= zn) {
-        return;
-    }
-
-    // Create a clipping frustum for visibility determination
-    editProjectionZ(&ds_proj, zn, zf);
-    ds_viewproj = (*view) * ds_proj;
-
-    // Cull and sort
-    ViewFrustum range_frustum(&ds_viewproj);
-    visGrass.RemoveAll();
-    currentWorldSpace->GrassStatics->GetVisibleMeshesCoarse(range_frustum, visGrass);
-    visGrass.SortByState();
+    // Cull and draw
+    DWORD command = 3, unused;
+    WriteFile(memHostPipe, &command, sizeof(command), &unused, 0);
+    WriteFile(memHostPipe, &params, sizeof(params), &unused, 0);
+    // wait for search to finish
+    ReadFile(memHostPipe, &command, sizeof(command), &unused, 0);
 
     buildGrassInstanceVB();
 }
@@ -38,33 +29,33 @@ void DistantLand::cullGrass(const D3DXMATRIX* view, const D3DXMATRIX* proj) {
 void DistantLand::buildGrassInstanceVB() {
     batchedGrass.clear();
 
-	if (visGrass.visible_set.empty()) {
+	if (visibleDistant->numGrass == 0) {
 		return;
 	}
 
-    if (visGrass.visible_set.size() > MaxGrassElements) {
+    if (visibleDistant->numGrass > MaxGrassElements) {
         static bool warnOnce = true;
         if (warnOnce) {
-            LOG::logline("!! Too many grass instances. (%d elements, limit %d)", visGrass.visible_set.size(), MaxGrassElements);
+            LOG::logline("!! Too many grass instances. (%d elements, limit %d)", visibleDistant->numGrass, MaxGrassElements);
             LOG::logline("!! Reduce grass density to avoid flickering grass.");
             warnOnce = false;
         }
-        visGrass.visible_set.resize(MaxGrassElements);
+        visibleDistant->numGrass = MaxGrassElements;
     }
 
-    const QuadTreeMesh* mesh = *visGrass.visible_set.begin();
+    const RenderMesh* mesh = &visibleDistant->grassMeshes[0];
     float* vbwrite = 0;
     int nz = 0;
 
-    HRESULT hr = vbGrassInstances->Lock(0, GrassInstStride * visGrass.visible_set.size(), (void**)&vbwrite, D3DLOCK_DISCARD);
+    HRESULT hr = vbGrassInstances->Lock(0, GrassInstStride * visibleDistant->numGrass, (void**)&vbwrite, D3DLOCK_DISCARD);
     if (hr != D3D_OK || vbwrite == 0) {
         return;
     }
 
     // Write all grass transforms into one buffer
     // Record how many instances belong to each different mesh
-    const auto& visible_set_const = visGrass.visible_set;
-    for (const auto& m : visible_set_const) {
+    for (DWORD i = 0; i < visibleDistant->numGrass; i++) {
+        auto m = &visibleDistant->grassMeshes[i];
         if (mesh->vBuffer != m->vBuffer) {
             batchedGrass.push_back(std::make_pair(mesh, nz));
             mesh = m;
@@ -95,7 +86,7 @@ void DistantLand::buildGrassInstanceVB() {
 
 // renderGrassInst - instanced grass with shadows
 void DistantLand::renderGrassInst() {
-    if (visGrass.visible_set.empty()) {
+    if (visibleDistant->numGrass == 0) {
         return;
     }
 
@@ -108,7 +99,7 @@ void DistantLand::renderGrassInst() {
 
 // renderGrassInstZ - Z only pass
 void DistantLand::renderGrassInstZ() {
-    if (visGrass.visible_set.empty()) {
+    if (visibleDistant->numGrass == 0) {
         return;
     }
 

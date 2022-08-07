@@ -10,7 +10,6 @@
 
 
 using std::string;
-using std::unordered_map;
 
 // renderStage0 - Render distant land at beginning of scene 0, after sky
 void DistantLand::renderStage0() {
@@ -81,7 +80,7 @@ void DistantLand::renderStage0() {
                     effect->EndPass();
                 }
                 else {
-                    visDistant.RemoveAll();
+                    visibleDistant->numStatics = 0;
                 }
             }
 
@@ -696,20 +695,21 @@ bool DistantLand::selectDistantCell() {
             cellname = mwBridge->getInteriorName();
         }
 
-        const auto iWS = mapWorldSpaces.find(cellname);
-        if (iWS != mapWorldSpaces.end()) {
-            currentWorldSpace = &iWS->second;
+        if (worldspaces.find(cellname) != worldspaces.end()) {
+            DistantLand::cellname = cellname;
+            _isDistantCell = true;
             return true;
         }
     }
 
-    currentWorldSpace = nullptr;
+    cellname.clear();
+    _isDistantCell = false;
     return false;
 }
 
 // isDistantCell - Check if there is distant land selected for this cell
 bool DistantLand::isDistantCell() {
-    return currentWorldSpace != nullptr;
+    return _isDistantCell;
 }
 
 // setView - Called once per frame to setup view dependent data
@@ -907,6 +907,86 @@ DistantLand::RecordedState::RecordedState(RecordedState&& source) noexcept
     source.vb = nullptr;
     source.ib = nullptr;
     source.texture = nullptr;
+}
+
+// RenderMesh
+void VisibleDistantMeshes::Render(
+    DistantType type,
+    IDirect3DDevice9* device,
+    ID3DXEffect* effect,
+    ID3DXEffect* effectPool,
+    D3DXHANDLE* texture_handle,
+    D3DXHANDLE* hasalpha_handle,
+    D3DXHANDLE* world_matrix_handle,
+    unsigned int vertex_size) {
+    // Iterate through each group of textures in the map
+    IDirect3DTexture9* last_texture = 0;
+    IDirect3DVertexBuffer9* last_buffer = 0;
+
+    DWORD count;
+    RenderMesh* meshes;
+    switch (type)
+    {
+    case LAND:
+        count = DistantLand::visibleDistant->numLand;
+        meshes = DistantLand::visibleDistant->landMeshes;
+        break;
+    case STATIC:
+        count = DistantLand::visibleDistant->numStatics;
+        meshes = DistantLand::visibleDistant->staticMeshes;
+        break;
+    case GRASS:
+        count = DistantLand::visibleDistant->numGrass;
+        meshes = DistantLand::visibleDistant->grassMeshes;
+        break;
+    case REFLECTION:
+        count = DistantLand::visibleDistant->numReflections;
+        meshes = DistantLand::visibleDistant->reflectionMeshes;
+        break;
+    case SHADOW:
+        count = DistantLand::visibleDistant->numShadow;
+        meshes = DistantLand::visibleDistant->shadowMeshes;
+        break;
+    }
+
+    for (DWORD i = 0; i < count; i++) {
+        auto mesh = &meshes[i];
+        bool effect_changed = false;
+
+        // Set texture if it has changed
+        if (effect && texture_handle && last_texture != mesh->tex) {
+            effectPool->SetTexture(*texture_handle, mesh->tex);
+            if (hasalpha_handle) {
+                // Control if texture access is required
+                effectPool->SetBool(*hasalpha_handle, mesh->hasalpha);
+            } else {
+                // Alpha test is compatible with transparency supersampling, while clip() isn't
+                device->SetRenderState(D3DRS_ALPHATESTENABLE, mesh->hasalpha);
+            }
+            effect_changed = true;
+            last_texture = mesh->tex;
+        }
+
+        // Set buffer if it has changed
+        if (last_buffer != mesh->vBuffer) {
+            device->SetIndices(mesh->iBuffer);
+            device->SetStreamSource(0, mesh->vBuffer, 0, vertex_size);
+            last_buffer = mesh->vBuffer;
+        }
+
+        // Set transform matrix
+        if (effect && world_matrix_handle) {
+            effectPool->SetMatrix(*world_matrix_handle, &mesh->transform);
+            effect_changed = true;
+        }
+
+        // Commit any changes that were made to the effect
+        if (effect_changed) {
+            effect->CommitChanges();
+        }
+
+        device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, mesh->verts, 0, mesh->faces);
+    }
 }
 
 

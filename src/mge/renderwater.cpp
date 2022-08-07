@@ -48,7 +48,7 @@ void DistantLand::renderWaterReflection(const D3DXMATRIX* view, const D3DXMATRIX
     D3DXMatrixTranspose(&clipMat, &clipMat);
     D3DXPlaneTransform(&plane, &plane, &clipMat);
 
-    if (visDistant.size() == 0) {
+    if (visibleDistant->numStatics == 0) {
         // Workaround for a Direct3D bug with clipping planes, where SetClipPlane
         // has no effect on the shader pipeline if the last rendered draw call was using
         // the fixed function pipeline. This is usually covered by distant statics, but
@@ -132,32 +132,22 @@ void DistantLand::renderReflectedSky() {
 }
 
 void DistantLand::renderReflectedStatics(const D3DXMATRIX* view, const D3DXMATRIX* proj) {
-    // Select appropriate static clipping distance
-    D3DXMATRIX ds_proj = *proj, ds_viewproj;
-    float zn = 4.0f, zf = Configuration.DL.NearStaticEnd * kCellSize;
+    DistantReflectionParameters params = {
+        *view, *proj, eyePos, fogEnd, Configuration.DL.NearStaticEnd, { 0, },
+    };
+    strcpy(params.worldspace, cellname.c_str());
 
-    // Don't draw beyond fully fogged distance; early out if frustum is empty
-    zf = std::min(fogEnd, zf);
-    if (zf <= zn) {
-        return;
-    }
-
-    // Create a clipping frustum for visibility determination
-    editProjectionZ(&ds_proj, zn, zf);
-    ds_viewproj = (*view) * ds_proj;
-
-    // Cull sort and draw
-    VisibleSet visReflected;
-    ViewFrustum range_frustum(&ds_viewproj);
-    D3DXVECTOR4 viewsphere(eyePos.x, eyePos.y, eyePos.z, zf);
-
-    currentWorldSpace->NearStatics->GetVisibleMeshes(range_frustum, viewsphere, visReflected);
-    currentWorldSpace->FarStatics->GetVisibleMeshes(range_frustum, viewsphere, visReflected);
-    currentWorldSpace->VeryFarStatics->GetVisibleMeshes(range_frustum, viewsphere, visReflected);
-    visReflected.SortByState();
+    // Cull and draw
+    DWORD command = 4, unused;
+    WriteFile(memHostPipe, &command, sizeof(command), &unused, 0);
+    WriteFile(memHostPipe, &params, sizeof(params), &unused, 0);
 
     device->SetVertexDeclaration(StaticDecl);
-    visReflected.Render(device, effect, effect, &ehTex0, 0, &ehWorld, SIZEOFSTATICVERT);
+
+    // wait for search to finish
+    ReadFile(memHostPipe, &command, sizeof(command), &unused, 0);
+
+    visibleDistant->Render(REFLECTION, device, effect, effect, &ehTex0, 0, &ehWorld, SIZEOFSTATICVERT);
 }
 
 void DistantLand::clearReflection() {

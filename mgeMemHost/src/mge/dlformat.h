@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dlmath.h"
 #include <vector>
 
 enum StaticType {
@@ -18,17 +19,17 @@ struct LandMesh {
     BoundingBox box;
     DWORD verts;
     DWORD faces;
-    IDirect3DVertexBuffer9* vbuffer;
-    IDirect3DIndexBuffer9* ibuffer;
+    ptr32 vbuffer;
+    ptr32 ibuffer;
 };
 
 struct DistantSubset {
     BoundingSphere sphere;
     D3DXVECTOR3 aabbMin, aabbMax;       // corners of the axis-aligned bounding box
-    IDirect3DTexture9* tex;
+    ptr32 tex;
     bool hasalpha;                      // texture has alpha transparency
-    IDirect3DVertexBuffer9* vbuffer;
-    IDirect3DIndexBuffer9* ibuffer;
+    ptr32 vbuffer;
+    ptr32 ibuffer;
     int verts;
     int faces;
 };

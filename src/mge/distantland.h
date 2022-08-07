@@ -6,13 +6,98 @@
 
 #include <string>
 #include <vector>
-#include <unordered_map>
+#include <unordered_set>
 #include <functional>
 #include <memory>
 
 
 
 struct MGEShader;
+
+#pragma pack(push, 4)
+struct RenderMesh {
+    IDirect3DTexture9* tex;
+    D3DXMATRIX transform;
+    int verts;
+    IDirect3DVertexBuffer9* vBuffer;
+    int faces;
+    IDirect3DIndexBuffer9* iBuffer;
+    bool hasalpha;
+};
+
+struct DistantStaticParameters {
+    D3DXMATRIX view;
+    D3DXMATRIX proj;
+    D3DXVECTOR4 eyePos;
+    float nearViewRange;
+    float fogEnd;
+    float nearStaticEnd;
+    float farStaticEnd;
+    float veryFarStaticEnd;
+    char worldspace[64];
+};
+
+struct DistantReflectionParameters {
+    D3DXMATRIX view;
+    D3DXMATRIX proj;
+    D3DXVECTOR4 eyePos;
+    float fogEnd;
+    float nearStaticEnd;
+    char worldspace[64];
+};
+
+struct DistantLandParameters {
+    D3DXMATRIX view;
+    D3DXMATRIX proj;
+    D3DXVECTOR4 eyePos;
+    float drawDistance;
+};
+
+struct DistantGrassParameters {
+    D3DXMATRIX view;
+    D3DXMATRIX proj;
+    float nearViewRange;
+    float fogEnd;
+    bool expFog;
+    char worldspace[64];
+};
+
+struct DistantShadowParameters {
+    D3DXMATRIX viewproj;
+    char worldspace[64];
+};
+
+enum DistantType {
+	LAND,
+    STATIC,
+    GRASS,
+    REFLECTION,
+    SHADOW
+};
+
+struct VisibleDistantMeshes {
+    DWORD numStatics;
+    RenderMesh staticMeshes[100000];
+    DWORD numLand;
+    RenderMesh landMeshes[100000];
+    DWORD numGrass;
+    RenderMesh grassMeshes[100000];
+    DWORD numReflections;
+    RenderMesh reflectionMeshes[100000];
+    DWORD numShadow;
+    RenderMesh shadowMeshes[100000];
+
+    void Render(
+        DistantType type,
+        IDirect3DDevice9* device,
+        ID3DXEffect* effect,
+        ID3DXEffect* effectPool,
+        D3DXHANDLE* texture_handle,
+        D3DXHANDLE* hasalpha_handle,
+        D3DXHANDLE* world_matrix_handle,
+        unsigned int vertex_size);
+};
+#pragma pack(pop)
 
 class DistantLand {
 public:
@@ -57,16 +142,9 @@ public:
 
     static VendorSpecificRendering vsr;
 
-    static std::unordered_map<std::string, WorldSpace> mapWorldSpaces;
-    static const WorldSpace* currentWorldSpace;
-    static QuadTree LandQuadTree;
-    static VisibleSet visLand;
-    static VisibleSet visDistant;
-    static VisibleSet visGrass;
-
     static std::vector<RecordedState> recordMW;
     static std::vector<RecordedState> recordSky;
-    static std::vector< std::pair<const QuadTreeMesh*, int> > batchedGrass;
+    static std::vector< std::pair<const RenderMesh*, int> > batchedGrass;
 
     static IDirect3DTexture9* texWorldColour, *texWorldNormals, *texWorldDetail;
     static IDirect3DTexture9* texDepthFrame;
@@ -122,10 +200,18 @@ public:
     static D3DXHANDLE ehRippleOrigin;
     static D3DXHANDLE ehWaveHeight;
 
+    static HANDLE memHostPipe;
+    static VisibleDistantMeshes* visibleDistant;
+
     static std::function<void(IDirect3DSurface9*)> captureScreenHandler;
     static bool captureScreenWithUI;
 
+    static std::unordered_set<std::string> worldspaces;
+    static std::string cellname;
+    static bool _isDistantCell;
+
     static bool init();
+    static bool initMemHost();
     static bool initShader();
     static bool initDepth();
     static bool initWater();
@@ -135,7 +221,6 @@ public:
     static bool initShadow();
     static bool initGrass();
     static bool loadDistantStatics();
-    static bool initDistantStaticsBVH();
     static bool reloadShaders();
     static void release();
 

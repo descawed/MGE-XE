@@ -45,8 +45,16 @@ void DistantLand::renderSky() {
 }
 
 void DistantLand::renderDistantLand(ID3DXEffect* e, const D3DXMATRIX* view, const D3DXMATRIX* proj) {
-    D3DXMATRIX world, viewproj = (*view) * (*proj);
-    D3DXVECTOR4 viewsphere(eyePos.x, eyePos.y, eyePos.z, Configuration.DL.DrawDist * kCellSize);
+    DistantLandParameters params {
+        *view, *proj, eyePos, Configuration.DL.DrawDist,
+    };
+
+    // Cull and draw
+    DWORD command = 1, unused;
+    WriteFile(memHostPipe, &command, sizeof(command), &unused, 0);
+    WriteFile(memHostPipe, &params, sizeof(params), &unused, 0);
+
+    D3DXMATRIX world;
 
     D3DXMatrixIdentity(&world);
     effect->SetMatrix(ehWorld, &world);
@@ -56,13 +64,12 @@ void DistantLand::renderDistantLand(ID3DXEffect* e, const D3DXMATRIX* view, cons
     effect->SetTexture(ehTex2, texWorldDetail);
     e->CommitChanges();
 
-    // Cull and draw
-    ViewFrustum frustum(&viewproj);
-    visLand.RemoveAll();
-    LandQuadTree.GetVisibleMeshes(frustum, viewsphere, visLand);
-
     device->SetVertexDeclaration(LandDecl);
-    visLand.Render(device, 0, 0, 0, 0, 0, SIZEOFLANDVERT);
+
+    // wait for search to finish
+    ReadFile(memHostPipe, &command, sizeof(command), &unused, 0);
+
+    visibleDistant->Render(LAND, device, 0, 0, 0, 0, 0, SIZEOFLANDVERT);
 }
 
 void DistantLand::renderDistantLandZ() {
@@ -74,45 +81,18 @@ void DistantLand::renderDistantLandZ() {
 
     // Draw with cached vis set
     device->SetVertexDeclaration(LandDecl);
-    visLand.Render(device, 0, 0, 0, 0, 0, SIZEOFLANDVERT);
+    visibleDistant->Render(LAND, device, 0, 0, 0, 0, 0, SIZEOFLANDVERT);
 }
 
 void DistantLand::cullDistantStatics(const D3DXMATRIX* view, const D3DXMATRIX* proj) {
-    D3DXMATRIX ds_proj = *proj, ds_viewproj;
-    D3DXVECTOR4 viewsphere(eyePos.x, eyePos.y, eyePos.z, 0);
-    float zn = nearViewRange - 768.0f, zf = zn;
-    float cullDist = fogEnd;
+    DistantStaticParameters params {
+        *view, *proj, eyePos, nearViewRange, fogEnd, Configuration.DL.NearStaticEnd, Configuration.DL.FarStaticEnd, Configuration.DL.VeryFarStaticEnd, { 0, },
+    };
+    strcpy(params.worldspace, cellname.c_str());
 
-    visDistant.RemoveAll();
-
-    zf = std::min(Configuration.DL.NearStaticEnd * kCellSize, cullDist);
-    if (zn < zf) {
-        editProjectionZ(&ds_proj, zn, zf);
-        ds_viewproj = (*view) * ds_proj;
-        ViewFrustum range_frustum(&ds_viewproj);
-        viewsphere.w = zf;
-        currentWorldSpace->NearStatics->GetVisibleMeshes(range_frustum, viewsphere, visDistant);
-    }
-
-    zf = std::min(Configuration.DL.FarStaticEnd * kCellSize, cullDist);
-    if (zn < zf) {
-        editProjectionZ(&ds_proj, zn, zf);
-        ds_viewproj = (*view) * ds_proj;
-        ViewFrustum range_frustum(&ds_viewproj);
-        viewsphere.w = zf;
-        currentWorldSpace->FarStatics->GetVisibleMeshes(range_frustum, viewsphere, visDistant);
-    }
-
-    zf = std::min(Configuration.DL.VeryFarStaticEnd * kCellSize, cullDist);
-    if (zn < zf) {
-        editProjectionZ(&ds_proj, zn, zf);
-        ds_viewproj = (*view) * ds_proj;
-        ViewFrustum range_frustum(&ds_viewproj);
-        viewsphere.w = zf;
-        currentWorldSpace->VeryFarStatics->GetVisibleMeshes(range_frustum, viewsphere, visDistant);
-    }
-
-    visDistant.SortByState();
+    DWORD command = 2, unused;
+    WriteFile(memHostPipe, &command, sizeof(command), &unused, 0);
+    WriteFile(memHostPipe, &params, sizeof(params), &unused, 0);
 }
 
 void DistantLand::renderDistantStatics() {
@@ -126,7 +106,10 @@ void DistantLand::renderDistantStatics() {
     }
 
     device->SetVertexDeclaration(StaticDecl);
-    visDistant.Render(device, effect, effect, &ehTex0, 0, &ehWorld, SIZEOFSTATICVERT);
+
+    DWORD result, unused;
+    ReadFile(memHostPipe, &result, sizeof(result), &unused, 0);
+    visibleDistant->Render(STATIC, device, effect, effect, &ehTex0, 0, &ehWorld, SIZEOFSTATICVERT);
 
     device->SetRenderState(D3DRS_CLIPPLANEENABLE, 0);
 }

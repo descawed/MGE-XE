@@ -36,16 +36,9 @@ IDirect3DVertexDeclaration9* DistantLand::GrassDecl;
 
 VendorSpecificRendering DistantLand::vsr;
 
-unordered_map<std::string, DistantLand::WorldSpace> DistantLand::mapWorldSpaces;
-const DistantLand::WorldSpace* DistantLand::currentWorldSpace;
-QuadTree DistantLand::LandQuadTree;
-VisibleSet DistantLand::visLand;
-VisibleSet DistantLand::visDistant;
-VisibleSet DistantLand::visGrass;
-
 vector<DistantLand::RecordedState> DistantLand::recordMW;
 vector<DistantLand::RecordedState> DistantLand::recordSky;
-vector< std::pair<const QuadTreeMesh*, int> > DistantLand::batchedGrass;
+vector< std::pair<const RenderMesh*, int> > DistantLand::batchedGrass;
 
 IDirect3DTexture9* DistantLand::texWorldColour, *DistantLand::texWorldNormals, *DistantLand::texWorldDetail;
 IDirect3DTexture9* DistantLand::texDepthFrame;
@@ -135,9 +128,12 @@ D3DXHANDLE DistantLand::ehWaveHeight;
 std::function<void(IDirect3DSurface9*)> DistantLand::captureScreenHandler = nullptr;
 bool DistantLand::captureScreenWithUI;
 
+std::unordered_set<std::string> DistantLand::worldspaces;
+std::string DistantLand::cellname;
+bool DistantLand::_isDistantCell = false;
 
-static vector<DistantStatic> DistantStatics;
-static unordered_map< string, vector<UsedDistantStatic> > UsedDistantStatics;
+HANDLE DistantLand::memHostPipe = INVALID_HANDLE_VALUE;
+VisibleDistantMeshes* DistantLand::visibleDistant;
 
 struct MeshResources {
     IDirect3DVertexBuffer9* vb;
@@ -148,6 +144,8 @@ struct MeshResources {
 };
 static vector<MeshResources> meshCollectionLand;
 static vector<MeshResources> meshCollectionStatics;
+static PROCESS_INFORMATION memHostProcess { INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, };
+static HANDLE sharedMem = INVALID_HANDLE_VALUE;
 
 
 
@@ -200,6 +198,11 @@ bool DistantLand::init() {
     vsr.init(device);
     BSA::init();
 
+    if (!initMemHost()) {
+        LOG::logline("memory host initialization failed");
+        return false;
+    }
+
     if (!initShader()) {
         return false;
     }
@@ -241,6 +244,70 @@ bool DistantLand::init() {
     isRenderCached = false;
     return true;
 }
+
+bool DistantLand::initMemHost() {
+    memHostPipe = CreateNamedPipe("\\\\.\\pipe\\mgeXE", PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, 1, 1024, 1024, 0, NULL);
+    if (memHostPipe == INVALID_HANDLE_VALUE)
+        return false;
+
+    SECURITY_ATTRIBUTES attr;
+    attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    attr.lpSecurityDescriptor = NULL;
+    attr.bInheritHandle = TRUE;
+    sharedMem = CreateFileMapping(INVALID_HANDLE_VALUE, &attr, PAGE_READWRITE, 0, sizeof(VisibleDistantMeshes), "Local\\mgeXE");
+    if (sharedMem == INVALID_HANDLE_VALUE) {
+        CloseHandle(memHostPipe);
+        memHostPipe = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    visibleDistant = (VisibleDistantMeshes*)MapViewOfFile(sharedMem, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+    if (visibleDistant == nullptr) {
+        CloseHandle(sharedMem);
+        sharedMem = INVALID_HANDLE_VALUE;
+        CloseHandle(memHostPipe);
+        memHostPipe = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    STARTUPINFO si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+
+    if (!CreateProcess("mgeMemHost.exe", NULL, NULL, NULL, TRUE, 0, NULL, NULL, &si, &memHostProcess)) {
+        UnmapViewOfFile(visibleDistant);
+        visibleDistant = nullptr;
+        CloseHandle(sharedMem);
+        sharedMem = INVALID_HANDLE_VALUE;
+        CloseHandle(memHostPipe);
+        memHostPipe = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    if (!ConnectNamedPipe(memHostPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
+        TerminateProcess(memHostProcess.hProcess, 10);
+        CloseHandle(memHostProcess.hProcess);
+        memHostProcess.hProcess = INVALID_HANDLE_VALUE;
+        CloseHandle(memHostProcess.hThread);
+        memHostProcess.hThread = INVALID_HANDLE_VALUE;
+        UnmapViewOfFile(visibleDistant);
+        visibleDistant = nullptr;
+        CloseHandle(sharedMem);
+        sharedMem = INVALID_HANDLE_VALUE;
+        CloseHandle(memHostPipe);
+        memHostPipe = INVALID_HANDLE_VALUE;
+        return false;
+    }
+
+    // send over shared memory handle
+    DWORD unused;
+    WriteFile(memHostPipe, &sharedMem, sizeof(HANDLE), &unused, 0);
+
+    LOG::logline("Memory host started successfully, PID: %u", memHostProcess.dwProcessId);
+
+    return true;
+}
+
 
 bool DistantLand::reloadShaders() {
     LOG::logline(">> Distant Land reloading");
@@ -738,15 +805,6 @@ bool DistantLand::initDistantStatics() {
         return false;
     }
 
-    if (!initDistantStaticsBVH()) {
-        return false;
-    }
-
-    // Remove UsedDistantStatic, DistantStatic, and DistantSubset objects
-    UsedDistantStatics.clear();
-    DistantStatics.clear();
-
-    currentWorldSpace = nullptr;
     return true;
 }
 
@@ -805,7 +863,8 @@ bool DistantLand::loadDistantStatics() {
 
     size_t DistantStaticCount;
     ReadFile(h, &DistantStaticCount, 4, &unused, 0);
-    DistantStatics.resize(DistantStaticCount);
+
+    WriteFile(memHostPipe, &DistantStaticCount, sizeof(DistantStaticCount), &unused, 0);
 
     HANDLE h2 = CreateFile("Data Files\\distantland\\statics\\static_meshes", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
     if (h2 == INVALID_HANDLE_VALUE) {
@@ -830,18 +889,24 @@ bool DistantLand::loadDistantStatics() {
     membuf_reader reader(file_buffer.get());
     CloseHandle(h2);
 
-    for (auto& i : DistantStatics) {
+    LOG::logline("Sending over distant statics");
+    for (size_t index = 0; index < DistantStaticCount; index++) {
         int numSubsets;
+        float radius;
+        float center;
+        char type;
         reader.read(&numSubsets, 4);
-        reader.read(&i.sphere.radius, 4);
-        reader.read(&i.sphere.center, 12);
-        reader.read(&i.type, 1);
+        reader.read(&radius, 4);
+        reader.read(&center, 12);
+        reader.read(&type, 1);
 
-        i.subsets.resize(numSubsets);
-        i.aabbMin = D3DXVECTOR3(FLT_MAX, FLT_MAX, FLT_MAX);
-        i.aabbMax = D3DXVECTOR3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        WriteFile(memHostPipe, &numSubsets, sizeof(numSubsets), &unused, 0);
+        WriteFile(memHostPipe, &radius, sizeof(radius), &unused, 0);
+        WriteFile(memHostPipe, &center, sizeof(center), &unused, 0);
+        WriteFile(memHostPipe, &type, sizeof(type), &unused, 0);
 
-        for (auto& subset : i.subsets) {
+        for (int j = 0; j < numSubsets; j++) {
+            DistantSubset subset;
             // Get bounding sphere
             reader.read(&subset.sphere.radius, 4);
             reader.read(&subset.sphere.center, 12);
@@ -853,14 +918,6 @@ bool DistantLand::loadDistantStatics() {
             // Get vertex and face count
             reader.read(&subset.verts, 4);
             reader.read(&subset.faces, 4);
-
-            // Update parent AABB
-            i.aabbMin.x = std::min(i.aabbMin.x, subset.aabbMin.x);
-            i.aabbMin.y = std::min(i.aabbMin.y, subset.aabbMin.y);
-            i.aabbMin.z = std::min(i.aabbMin.z, subset.aabbMin.z);
-            i.aabbMax.x = std::max(i.aabbMax.x, subset.aabbMax.x);
-            i.aabbMax.y = std::max(i.aabbMax.y, subset.aabbMax.y);
-            i.aabbMax.z = std::max(i.aabbMax.z, subset.aabbMax.z);
 
             // Load mesh data
             IDirect3DVertexBuffer9* vb;
@@ -890,12 +947,19 @@ bool DistantLand::loadDistantStatics() {
             if (!tex) {
                 LOG::logline("Cannot load texture %s", texname);
                 errorTexture->AddRef();
-                tex = errorTexture;
+                subset.hasalpha = false;
+                subset.tex = errorTexture;
+            } else {
+                D3DSURFACE_DESC texdesc;
+                tex->GetLevelDesc(0, &texdesc);
+                subset.hasalpha = (texdesc.Format == D3DFMT_A8R8G8B8 || texdesc.Format == D3DFMT_DXT3 || texdesc.Format == D3DFMT_DXT5);
+                subset.tex = tex;
             }
-            subset.tex = tex;
 
             // Keep resource pointers for deallocation
             meshCollectionStatics.push_back(MeshResources(vb, ib, tex));
+
+            WriteFile(memHostPipe, &subset, sizeof(subset), &unused, 0);
         }
     }
     file_buffer.reset();
@@ -910,201 +974,40 @@ bool DistantLand::loadDistantStatics() {
     LOG::logline("-- Distant static texture memory use: %d MB", texMemUsage);
     LOG::flush();
 
-
     // Load statics references
-    mapWorldSpaces.clear();
+    LOG::logline("Sending over static references");
     for (size_t nWorldSpace = 0; true; ++nWorldSpace) {
         size_t UsedDistantStaticCount;
-        decltype(UsedDistantStatics)::iterator iCell;
 
         ReadFile(h, &UsedDistantStaticCount, 4, &unused, 0);
+        WriteFile(memHostPipe, &UsedDistantStaticCount, sizeof(UsedDistantStaticCount), &unused, 0);
         if (nWorldSpace != 0 && UsedDistantStaticCount == 0) {
             break;
         }
 
         if (nWorldSpace == 0) {
-            mapWorldSpaces.insert(make_pair(string(), WorldSpace()));
-            iCell = UsedDistantStatics.insert(make_pair(string(), vector<UsedDistantStatic>())).first;
-            if (UsedDistantStaticCount == 0) {
-                continue;
-            }
+            if (UsedDistantStaticCount == 0)
+				continue;
+            worldspaces.insert("");
         } else {
             char cellname[64];
             ReadFile(h, &cellname, 64, &unused, 0);
-            iCell = UsedDistantStatics.insert(make_pair(string(cellname), vector<UsedDistantStatic>())).first;
-            mapWorldSpaces.insert(make_pair(string(cellname), WorldSpace()));
+            WriteFile(memHostPipe, &cellname, sizeof(cellname), &unused, 0);
+            worldspaces.insert(cellname);
         }
 
         size_t UsedDistantStaticDataSize = UsedDistantStaticCount * 32;
         auto UsedDistantStaticData = std::make_unique<char[]>(UsedDistantStaticDataSize);
         ReadFile(h, UsedDistantStaticData.get(), UsedDistantStaticDataSize, &unused, 0);
-        membuf_reader udsReader(UsedDistantStaticData.get());
-
-        vector<UsedDistantStatic>& ThisWorldStatics = iCell->second;
-        ThisWorldStatics.reserve(UsedDistantStaticCount);
-
-        for (size_t i = 0; i < UsedDistantStaticCount; ++i) {
-            UsedDistantStatic NewUsedStatic;
-            float yaw, pitch, roll, scale;
-
-            udsReader.read(&NewUsedStatic.staticRef, 4);
-            udsReader.read(&NewUsedStatic.pos, 12);
-            udsReader.read(&yaw, 4);
-            udsReader.read(&pitch, 4);
-            udsReader.read(&roll, 4);
-            udsReader.read(&scale, 4);
-
-            DistantStatic* stat = &DistantStatics[NewUsedStatic.staticRef];
-            if (scale == 0.0f) {
-                scale = 1.0f;
-            }
-            NewUsedStatic.scale = scale;
-
-            D3DXMATRIX transmat, rotmatx, rotmaty, rotmatz, scalemat;
-            D3DXMatrixTranslation(&transmat, NewUsedStatic.pos.x, NewUsedStatic.pos.y, NewUsedStatic.pos.z);
-            D3DXMatrixRotationX(&rotmatx, -yaw);
-            D3DXMatrixRotationY(&rotmaty, -pitch);
-            D3DXMatrixRotationZ(&rotmatz, -roll);
-            D3DXMatrixScaling(&scalemat, scale, scale, scale);
-            NewUsedStatic.transform = scalemat * rotmatz * rotmaty * rotmatx * transmat;
-            NewUsedStatic.sphere = NewUsedStatic.GetBoundingSphere(stat->sphere);
-            NewUsedStatic.box = NewUsedStatic.GetBoundingBox(stat->aabbMin, stat->aabbMax);
-
-            ThisWorldStatics.push_back(NewUsedStatic);
-        }
+        WriteFile(memHostPipe, UsedDistantStaticData.get(), UsedDistantStaticDataSize, &unused, 0);
     }
+
+    WriteFile(memHostPipe, &Configuration.DL.FarStaticMinSize, sizeof(Configuration.DL.FarStaticMinSize), &unused, 0);
+    WriteFile(memHostPipe, &Configuration.DL.VeryFarStaticMinSize, sizeof(Configuration.DL.VeryFarStaticMinSize), &unused, 0);
+
+    LOG::logline("Sent static references");
 
     CloseHandle(h);
-    return true;
-}
-
-bool DistantLand::initDistantStaticsBVH() {
-    for (auto& iWS : mapWorldSpaces) {
-        vector<UsedDistantStatic>& uds = UsedDistantStatics.find(iWS.first)->second;
-
-        // Initialize quadtrees
-        iWS.second.NearStatics = std::make_unique<QuadTree>();
-        iWS.second.FarStatics = std::make_unique<QuadTree>();
-        iWS.second.VeryFarStatics = std::make_unique<QuadTree>();
-        iWS.second.GrassStatics = std::make_unique<QuadTree>();
-        QuadTree* NQTR = iWS.second.NearStatics.get();
-        QuadTree* FQTR = iWS.second.FarStatics.get();
-        QuadTree* VFQTR = iWS.second.VeryFarStatics.get();
-        QuadTree* GQTR = iWS.second.GrassStatics.get();
-
-        // Calclulate optimal initial quadtree size
-        D3DXVECTOR2 aabbMax = D3DXVECTOR2(-FLT_MAX, -FLT_MAX);
-        D3DXVECTOR2 aabbMin = D3DXVECTOR2(FLT_MAX, FLT_MAX);
-
-        // Find xyz bounds
-        for (const auto& i : uds) {
-            float x = i.pos.x, y = i.pos.y, r = i.sphere.radius;
-
-            aabbMax.x = std::max(x + r, aabbMax.x);
-            aabbMax.y = std::max(y + r, aabbMax.y);
-            aabbMin.x = std::min(aabbMin.x, x - r);
-            aabbMin.y = std::min(aabbMin.y, y - r);
-        }
-
-        float box_size = std::max(aabbMax.x - aabbMin.x, aabbMax.y - aabbMin.y);
-        D3DXVECTOR2 box_center = 0.5 * (aabbMax + aabbMin);
-
-        NQTR->SetBox(box_size, box_center);
-        FQTR->SetBox(box_size, box_center);
-        VFQTR->SetBox(box_size, box_center);
-        GQTR->SetBox(box_size, box_center);
-
-        for (const auto& i : uds) {
-            DistantStatic* stat = &DistantStatics[i.staticRef];
-            QuadTree* targetQTR;
-
-            // Use transformed radius
-            float radius = i.sphere.radius;
-
-            // Buildings are treated as larger objects, as they are typically
-            // smaller component meshes combined to make a single building
-            if (stat->type == STATIC_BUILDING) {
-                radius *= 2.0f;
-            }
-
-            // Select quadtree to place object in
-            switch (stat->type) {
-            case STATIC_AUTO:
-            case STATIC_TREE:
-            case STATIC_BUILDING:
-                if (radius <= Configuration.DL.FarStaticMinSize) {
-                    targetQTR = NQTR;
-                } else if (radius <= Configuration.DL.VeryFarStaticMinSize) {
-                    targetQTR = FQTR;
-                } else {
-                    targetQTR = VFQTR;
-                }
-                break;
-
-            case STATIC_GRASS:
-                targetQTR = GQTR;
-                break;
-
-            case STATIC_NEAR:
-                targetQTR = NQTR;
-                break;
-
-            case STATIC_FAR:
-                targetQTR = FQTR;
-                break;
-
-            case STATIC_VERY_FAR:
-                targetQTR = VFQTR;
-                break;
-
-            default:
-                continue;
-            }
-
-            // Add sub-meshes to appropriate quadtree
-            if (stat->type == STATIC_BUILDING) {
-                // Use model bound so that all building parts have coherent visibility
-                for (auto& s : stat->subsets) {
-                    targetQTR->AddMesh(
-                        i.sphere,
-                        i.box,
-                        i.transform,
-                        s.tex,
-                        s.verts,
-                        s.vbuffer,
-                        s.faces,
-                        s.ibuffer
-                    );
-                }
-            } else {
-                // Use individual mesh bounds
-                for (auto& s : stat->subsets) {
-                    targetQTR->AddMesh(
-                        i.GetBoundingSphere(s.sphere),
-                        i.GetBoundingBox(s.aabbMin, s.aabbMax),
-                        i.transform,
-                        s.tex,
-                        s.verts,
-                        s.vbuffer,
-                        s.faces,
-                        s.ibuffer
-                    );
-                }
-            }
-        }
-
-        NQTR->Optimize();
-        NQTR->CalcVolume();
-        FQTR->Optimize();
-        FQTR->CalcVolume();
-        VFQTR->Optimize();
-        VFQTR->CalcVolume();
-        GQTR->Optimize();
-        GQTR->CalcVolume();
-
-        uds.clear();
-    }
-
     return true;
 }
 
@@ -1153,17 +1056,17 @@ bool DistantLand::initLandscape() {
 
     DWORD mesh_count, unused;
     ReadFile(file, &mesh_count, 4, &unused, 0);
+    WriteFile(memHostPipe, &mesh_count, sizeof(mesh_count), &unused, 0);
 
-    vector<LandMesh> meshesLand;
-    meshesLand.resize(mesh_count);
-
-    if (!meshesLand.empty()) {
+    if (mesh_count > 0) {
         D3DXVECTOR2 qtmin(FLT_MAX, FLT_MAX), qtmax(-FLT_MAX, -FLT_MAX);
         D3DXMATRIX world;
         D3DXMatrixIdentity(&world);
 
         // Load meshes and calculate max size of quadtree
-        for (auto& i : meshesLand) {
+        LOG::logline("Sending over landscape");
+        for (DWORD index = 0; index < mesh_count; index++) {
+            LandMesh i;
             ReadFile(file, &i.sphere.radius, 4, &unused,0);
             ReadFile(file, &i.sphere.center, 12, &unused,0);
 
@@ -1193,23 +1096,13 @@ bool DistantLand::initLandscape() {
             i.vbuffer = vb;
             i.ibuffer = ib;
 
-            qtmin.x = std::min(qtmin.x, i.sphere.center.x - i.sphere.radius);
-            qtmin.y = std::min(qtmin.y, i.sphere.center.y - i.sphere.radius);
-            qtmax.x = std::max(qtmax.x, i.sphere.center.x + i.sphere.radius);
-            qtmax.y = std::max(qtmax.y, i.sphere.center.y + i.sphere.radius);
-        }
-
-        LandQuadTree.SetBox(std::max(qtmax.x - qtmin.x, qtmax.y - qtmin.y), 0.5 * (qtmax + qtmin));
-
-        // Add meshes to the quadtree
-        for (auto& i : meshesLand) {
             meshCollectionLand.push_back(MeshResources(i.vbuffer, i.ibuffer, 0));
-            LandQuadTree.AddMesh(i.sphere, i.box, world, texWorldColour, i.verts, i.vbuffer, i.faces, i.ibuffer);
+
+            WriteFile(memHostPipe, &i, sizeof(i), &unused, 0);
         }
     }
 
     CloseHandle(file);
-    LandQuadTree.CalcVolume();
 
     return true;
 }
@@ -1245,7 +1138,25 @@ void DistantLand::release() {
     PostShaders::release();
     FixedFunctionShader::release();
 
-    mapWorldSpaces.clear();
+    if (memHostProcess.hProcess != INVALID_HANDLE_VALUE) {
+        TerminateProcess(memHostProcess.hProcess, 0);
+        CloseHandle(memHostProcess.hProcess);
+        memHostProcess.hProcess = INVALID_HANDLE_VALUE;
+        CloseHandle(memHostProcess.hThread);
+        memHostProcess.hThread = INVALID_HANDLE_VALUE;
+    }
+    if (visibleDistant != nullptr) {
+        UnmapViewOfFile(visibleDistant);
+        visibleDistant = nullptr;
+    }
+    if (sharedMem != INVALID_HANDLE_VALUE) {
+        CloseHandle(sharedMem);
+        sharedMem = INVALID_HANDLE_VALUE;
+    }
+    if (memHostPipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(memHostPipe);
+        memHostPipe = INVALID_HANDLE_VALUE;
+    }
 
     for (auto& iM : meshCollectionStatics) {
         iM.vb->Release();
@@ -1254,7 +1165,6 @@ void DistantLand::release() {
     }
     meshCollectionStatics.clear();
 
-    LandQuadTree.Clear();
     for (auto& iM : meshCollectionLand) {
         iM.vb->Release();
         iM.ib->Release();
