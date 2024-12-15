@@ -2,8 +2,11 @@
 
 #include "ipc/bridge.h"
 #include "ipc/vec.h"
+
 #include <queue>
 #include <vector>
+
+#include <d3d9.h>
 
 namespace IPC {
 	/**
@@ -34,18 +37,32 @@ namespace IPC {
 		std::queue<VecId> m_freeVecs;
 		Parameters* m_ipcParameters;
 
+		// use D3D9Ex because it provides stronger guarantees about keeping our textures and stuff in memory
+		IDirect3D9Ex* m_d3d;
+		IDirect3DDevice9Ex* m_device;
+
+		IDirect3DQuery9* m_occlusionQuery;
+		IDirect3DSurface9* m_occlusionSurface;
+		IDirect3DTexture9* m_occlusionTexture;
+		IDirect3DIndexBuffer9* m_occlusionIndexes;
+		ID3DXRenderToSurface* m_occlusionRender;
+
+		bool m_hasOcclusion;
+
 		template<typename T>
 		Vec<T>& getVec(VecId id);
 
 		bool allocVec();
 		bool freeVec();
 		void updateDynVis();
+		bool initOcclusion();
 		bool initDistantStatics();
 		bool initLandscape();
 		void setWorldSpace();
 		void getVisibleMeshesCoarse();
 		void getVisibleMeshes();
 		void sortVisibleSet();
+		bool generateOcclusionMask();
 
 	public:
 		Server(HANDLE sharedMem, HANDLE clientProcess, HANDLE rpcStartEvent, HANDLE rpcCompleteEvent);

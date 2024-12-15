@@ -109,6 +109,8 @@ namespace IPC {
         GetVisibleMeshesCoarse,
         GetVisibleMeshes,
         SortVisibleSet,
+        InitOcclusion,
+        GenerateOcclusionMask,
     };
 
     struct AllocVecParameters {
@@ -168,6 +170,18 @@ namespace IPC {
         IN D3DXVECTOR4 viewSphere;
     };
 
+    struct InitOcclusionParameters {
+        IN D3DDISPLAYMODE displayMode;
+
+        OUT bool success;
+    };
+
+    struct OcclusionMaskParameters {
+        IN VecId visibleSet;
+        IN D3DXMATRIX view;
+        IN D3DXMATRIX proj;
+    };
+
 	struct Parameters {
         Command command;
         union {
@@ -178,6 +192,8 @@ namespace IPC {
             InitLandscapeParameters initLandscapeParams;
             SetWorldSpaceParameters worldSpaceParams;
             GetMeshesParameters meshParams;
+            InitOcclusionParameters initOcclusionParams;
+            OcclusionMaskParameters occlusionMaskParams;
         } params;
 	};
 }

@@ -206,6 +206,7 @@ struct QuadTreeNode {
     D3DXVECTOR2 box_center;
     BoundingSphere sphere;
     std::vector<QuadTreeMesh*> meshes;
+    IDirect3DVertexBuffer9* box_verts;
 
     QuadTreeNode(QuadTree* owner);
     ~QuadTreeNode();
@@ -326,8 +327,8 @@ struct QuadTreeNode {
     void PushDown(QuadTreeMesh* new_mesh, int depth);
     bool Optimize();
     BoundingSphere CalcVolume();
+    bool CreateOcclusionBox(IDirect3DDevice9Ex* device);
     int GetChildCount() const;
-    void ClearChildren();
 };
 
 //-----------------------------------------------------------------------------
@@ -362,6 +363,7 @@ public:
     }
     void SetBox(float size, const D3DXVECTOR2& center);
     void CalcVolume();
+    bool CreateOcclusionBoxes(IDirect3DDevice9Ex* device);
 
     QuadTreeNode* m_root_node;
     MemoryPool m_node_pool;

@@ -4,6 +4,15 @@
 
 #include <cassert>
 
+#include <d3dx9.h>
+
+template<class T> static inline void CleanupIfc(T*& resource) {
+	if (resource != nullptr) {
+		resource->Release();
+		resource = nullptr;
+	}
+}
+
 namespace IPC {
 	Server::Server(HANDLE sharedMem, HANDLE clientProcess, HANDLE rpcStartEvent, HANDLE rpcCompleteEvent) :
 		m_sharedMem(sharedMem),
@@ -11,7 +20,15 @@ namespace IPC {
 		m_rpcStartEvent(rpcStartEvent),
 		m_rpcCompleteEvent(rpcCompleteEvent),
 		m_ipcParameters(nullptr),
-		m_freeVecs()
+		m_freeVecs(),
+		m_d3d(nullptr),
+		m_device(nullptr),
+		m_occlusionQuery(nullptr),
+		m_occlusionSurface(nullptr),
+		m_occlusionTexture(nullptr),
+		m_occlusionIndexes(nullptr),
+		m_occlusionRender(nullptr),
+		m_hasOcclusion(false)
 	{ }
 
 	Server::~Server() {
@@ -19,6 +36,14 @@ namespace IPC {
 			UnmapViewOfFile(m_ipcParameters);
 			m_ipcParameters = nullptr;
 		}
+
+		CleanupIfc(m_occlusionRender);
+		CleanupIfc(m_occlusionIndexes);
+		CleanupIfc(m_occlusionTexture);
+		CleanupIfc(m_occlusionSurface);
+		CleanupIfc(m_occlusionQuery);
+		CleanupIfc(m_device);
+		CleanupIfc(m_d3d);
 
 		CleanupHandle(m_sharedMem);
 		CleanupHandle(m_clientProcess);
@@ -36,6 +61,40 @@ namespace IPC {
 	}
 
 	bool Server::init() {
+		// all occlusion bounding boxes use the same indexes
+		constexpr UINT indexBufferSize = 6 * 6 * 2; // 6 faces with 6 indexes each taking 2 bytes
+		constexpr WORD indexes[] = {
+			// Front face
+			4, 5, 6,  5, 7, 6,
+			// Back face
+			1, 0, 2,  1, 2, 3,
+			// Left face
+			0, 4, 2,  4, 6, 2,
+			// Right face
+			5, 1, 7,  1, 3, 7,
+			// Top face
+			2, 6, 3,  6, 7, 3,
+			// Bottom face
+			0, 1, 4,  1, 5, 4
+		};
+
+		WNDCLASSA wndClass = {
+			CS_CLASSDC,
+			DefWindowProcA,
+			0,
+			0,
+			NULL,
+			NULL,
+			NULL,
+			NULL,
+			NULL,
+			"mgeHost64",
+		};
+		D3DPRESENT_PARAMETERS presentParams = { };
+		HWND hWnd = NULL;
+		HRESULT hr = S_OK;
+		WORD* indexBuffer = nullptr;
+
 		if (m_ipcParameters != nullptr) {
 			UnmapViewOfFile(m_ipcParameters);
 			m_ipcParameters = nullptr;
@@ -47,7 +106,78 @@ namespace IPC {
 			return false;
 		}
 
+		// initialize D3D for occlusion testing
+		hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &m_d3d);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create Direct3D object: %08X", hr);
+			goto d3dCreateFailed;
+		}
+
+		// create dummy window
+		if (!RegisterClassA(&wndClass)) {
+			LOG::winerror("Failed to register window class");
+			goto registerClassFailed;
+		}
+
+		hWnd = CreateWindowA("mgeHost64", "mgeHost64", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+		if (hWnd == NULL) {
+			LOG::winerror("Failed to create dummy window");
+			goto createWindowFailed;
+		}
+
+		presentParams.Windowed = TRUE;
+		presentParams.BackBufferFormat = D3DFMT_UNKNOWN;
+		presentParams.BackBufferWidth = 1;
+		presentParams.BackBufferHeight = 1;
+		presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
+		hr = m_d3d->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &presentParams, NULL, &m_device);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create D3D device: %08X", hr);
+			goto deviceCreateFailed;
+		}
+
+		// create any occlusion stuff that we don't need other information for
+		hr = m_device->CreateIndexBuffer(indexBufferSize, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &m_occlusionIndexes, NULL);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create index buffer: %08X", hr);
+			goto indexBufferCreateFailed;
+		}
+
+		hr = m_occlusionIndexes->Lock(0, indexBufferSize, reinterpret_cast<void**>(&indexBuffer), 0);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to lock index buffer: %08X", hr);
+			goto indexBufferWriteFailed;
+		}
+
+		std::memcpy(indexBuffer, indexes, indexBufferSize);
+
+		m_occlusionIndexes->Unlock();
+
+		hr = m_device->CreateQuery(D3DQUERYTYPE_OCCLUSION, &m_occlusionQuery);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create occlusion query: %08X", hr);
+			goto createQueryFailed;
+		}
+
 		return true;
+
+	createQueryFailed:
+	indexBufferWriteFailed:
+		CleanupIfc(m_occlusionIndexes);
+	indexBufferCreateFailed:
+		CleanupIfc(m_device);
+	deviceCreateFailed:
+		DestroyWindow(hWnd);
+		hWnd = NULL;
+	createWindowFailed:
+		UnregisterClassA("mgeHost64", GetModuleHandleA(NULL));
+	registerClassFailed:
+		CleanupIfc(m_d3d);
+	d3dCreateFailed:
+		UnmapViewOfFile(m_ipcParameters);
+		m_ipcParameters = nullptr;
+
+		return false;
 	}
 
 	bool Server::listen() {
@@ -99,6 +229,12 @@ namespace IPC {
 				break;
 			case Command::SortVisibleSet:
 				sortVisibleSet();
+				break;
+			case Command::InitOcclusion:
+				initOcclusion();
+				break;
+			case Command::GenerateOcclusionMask:
+				generateOcclusionMask();
 				break;
 			default:
 				LOG::logline("Received unknown command value %u", m_ipcParameters->command);
@@ -176,11 +312,41 @@ namespace IPC {
 		}
 	}
 
+	bool Server::initOcclusion() {
+		constexpr UINT resolutionScale = 4; // quarter-res occlusion
+
+		auto& params = m_ipcParameters->params.initOcclusionParams;
+		params.success = false;
+
+		auto& displayMode = params.displayMode;
+		auto hr = D3DXCreateTexture(m_device, displayMode.Width / resolutionScale, displayMode.Height / resolutionScale,
+			1, D3DUSAGE_RENDERTARGET, displayMode.Format, D3DPOOL_DEFAULT, &m_occlusionTexture);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create occlusion texture: %08X", hr);
+			return false;
+		}
+
+		D3DSURFACE_DESC desc;
+		m_occlusionTexture->GetSurfaceLevel(0, &m_occlusionSurface);
+		m_occlusionSurface->GetDesc(&desc);
+
+		hr = D3DXCreateRenderToSurface(m_device, desc.Width, desc.Height, desc.Format, TRUE, D3DFMT_D16, &m_occlusionRender);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to create occlusion render-to-surface: %08X", hr);
+			CleanupIfc(m_occlusionSurface);
+			CleanupIfc(m_occlusionTexture);
+			return false;
+		}
+
+		params.success = true;
+		return true;
+	}
+
 	bool Server::initDistantStatics() {
 		auto& params = m_ipcParameters->params.distantStaticParams;
 		auto& distantStatics = getVec<DistantStatic>(params.distantStatics);
 		auto& distantSubsets = getVec<DistantSubset>(params.distantSubsets);
-		return DistantLandShare::initDistantStaticsServer(distantStatics, distantSubsets);
+		return DistantLandShare::initDistantStaticsServer(distantStatics, distantSubsets, m_device);
 	}
 
 	bool Server::initLandscape() {
@@ -209,5 +375,24 @@ namespace IPC {
 		auto& params = m_ipcParameters->params.meshParams;
 		auto& vec = getVec<RenderMesh>(params.visibleSet);
 		DistantLandShare::sortVisibleSet(vec, params.sort);
+	}
+
+	bool Server::generateOcclusionMask() {
+		auto& params = m_ipcParameters->params.occlusionMaskParams;
+		auto& vec = getVec<RenderMesh>(params.visibleSet);
+		
+		auto hr = m_device->SetTransform(D3DTS_VIEW, &params.view);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to set view matrix: %08X", hr);
+			return false;
+		}
+
+		hr = m_device->SetTransform(D3DTS_PROJECTION, &params.proj);
+		if (FAILED(hr)) {
+			LOG::logline("Failed to set projection matrix: %08X", hr);
+			return false;
+		}
+
+		return true;
 	}
 }

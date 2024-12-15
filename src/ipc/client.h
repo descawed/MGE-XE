@@ -220,6 +220,22 @@ namespace IPC {
 		*/
 		bool sortVisibleSet(VecId visibleSet, VisibleSetSort sort);
 
+		/**
+		* @brief Initialize occlusion resources.
+		* @param device A pointer to the Direct3D device.
+		* @return Whether the RPC was successful.
+		*/
+		bool initOcclusionBlocking(IDirect3DDevice9* device);
+
+		/**
+		* @brief Generate an occlusion mask from the provided visible meshes.
+		* @param visibleSet ID of a shared vector of RenderMesh objects which will be used to create the occlusion mask. This vector must not be modified before the RPC completes.
+		* @param view The camera's current view matrix.
+		* @param proj The projection matrix.
+		* @return Whether the RPC was issued successfully.
+		*/
+		bool generateOcclusionMask(VecId visibleSet, const D3DXMATRIX& view, const D3DXMATRIX& proj);
+
 		WakeReason waitForCompletion(DWORD ms = MaxWait);
 	};
 }

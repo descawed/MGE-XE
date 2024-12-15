@@ -1,5 +1,6 @@
 
 #include "quadtree.h"
+#include "support/log.h"
 
 #include <algorithm>
 
@@ -254,6 +255,72 @@ BoundingSphere QuadTreeNode::CalcVolume() {
 
 //-----------------------------------------------------------------------------
 
+bool QuadTreeNode::CreateOcclusionBox(IDirect3DDevice9Ex* device) {
+    constexpr UINT vertexBufferSize = 8 * 3 * 4;
+
+    D3DXVECTOR3 vertices[] = {
+        { -sphere.radius, -sphere.radius, -sphere.radius },
+        {  sphere.radius, -sphere.radius, -sphere.radius },
+        { -sphere.radius,  sphere.radius, -sphere.radius },
+        {  sphere.radius,  sphere.radius, -sphere.radius },
+        { -sphere.radius, -sphere.radius,  sphere.radius },
+        {  sphere.radius, -sphere.radius,  sphere.radius },
+        { -sphere.radius,  sphere.radius,  sphere.radius },
+        {  sphere.radius,  sphere.radius,  sphere.radius },
+    };
+
+    for (size_t i = 0; i < 8; i++) {
+        vertices[i] += sphere.center;
+    }
+
+    if (box_verts != nullptr) {
+        box_verts->Release();
+        box_verts = nullptr;
+    }
+
+    auto hr = device->CreateVertexBuffer(vertexBufferSize, D3DUSAGE_WRITEONLY, D3DFVF_XYZ, D3DPOOL_DEFAULT, &box_verts, NULL);
+    if (FAILED(hr)) {
+        LOG::logline("Failed to create occlusion vertex buffer: %08X", hr);
+        return false;
+    }
+
+    void* data = nullptr;
+    hr = box_verts->Lock(0, vertexBufferSize, &data, 0);
+    if (FAILED(hr)) {
+        LOG::logline("Failed to lock occlusion vertex buffer: %08X", hr);
+        box_verts->Release();
+        box_verts = nullptr;
+        return false;
+    }
+
+    std::memcpy(data, vertices, vertexBufferSize);
+
+    box_verts->Unlock();
+
+    // propagate to children
+    bool success = true;
+
+    if (children[0]) {
+        success = children[0]->CreateOcclusionBox(device);
+    }
+
+    if (children[1] && success) {
+        success = children[1]->CreateOcclusionBox(device);
+    }
+
+    if (children[2] && success) {
+        success = children[2]->CreateOcclusionBox(device);
+    }
+
+    if (children[3] && success) {
+        success = children[3]->CreateOcclusionBox(device);
+    }
+
+    return success;
+}
+
+//-----------------------------------------------------------------------------
+
 int QuadTreeNode::GetChildCount() const {
     int count = 0;
 
@@ -287,6 +354,7 @@ QuadTreeNode::QuadTreeNode(QuadTree* owner) {
     box_size = 0.0f;
     box_center.x = 0.0f;
     box_center.y = 0.0f;
+    box_verts = nullptr;
 
     m_owner = owner;
 }
@@ -295,6 +363,11 @@ QuadTreeNode::QuadTreeNode(QuadTree* owner) {
 
 QuadTreeNode::~QuadTreeNode() {
     // Don't delete meshes or children because the tree doesn't own them
+    // except for the occlusion box
+    if (box_verts != nullptr) {
+        box_verts->Release();
+        box_verts = nullptr;
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -377,6 +450,12 @@ void QuadTree::SetBox(float size, const D3DXVECTOR2& center) {
 
 void QuadTree::CalcVolume() {
     m_root_node->CalcVolume();
+}
+
+//-----------------------------------------------------------------------------
+
+bool QuadTree::CreateOcclusionBoxes(IDirect3DDevice9Ex* device) {
+    return m_root_node->CreateOcclusionBox(device);
 }
 
 //-----------------------------------------------------------------------------

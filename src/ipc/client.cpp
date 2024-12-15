@@ -275,6 +275,34 @@ namespace IPC {
 		return beginRpc(Command::SortVisibleSet);
 	}
 
+	bool Client::initOcclusionBlocking(IDirect3DDevice9* device) {
+		WAIT_FOR_PREVIOUS_COMMAND;
+
+		auto& params = m_ipcParameters->params.initOcclusionParams;
+		device->GetDisplayMode(0, &params.displayMode);
+
+		if (!beginRpc(Command::InitOcclusion)) {
+			return false;
+		}
+
+		if (waitForCompletion() != WakeReason::Complete) {
+			return false;
+		}
+
+		return params.success;
+	}
+
+	bool Client::generateOcclusionMask(VecId visibleSet, const D3DXMATRIX& view, const D3DXMATRIX& proj) {
+		WAIT_FOR_PREVIOUS_COMMAND;
+
+		auto& params = m_ipcParameters->params.occlusionMaskParams;
+		params.visibleSet = visibleSet;
+		params.view = view;
+		params.proj = proj;
+
+		return beginRpc(Command::GenerateOcclusionMask);
+	}
+
 	WakeReason Client::waitForCompletion(DWORD ms) {
 		auto result = WaitForMultipleObjects(2, m_waitHandles, FALSE, ms);
 		switch (result) {

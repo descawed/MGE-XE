@@ -48,7 +48,7 @@ public:
     static bool hasCurrentWorldSpace;
 	static QuadTree LandQuadTree;
 
-    static bool initDistantStaticsServer(IPC::Vec<DistantStatic>& distantStatics, IPC::Vec<DistantSubset>& distantSubsets);
+    static bool initDistantStaticsServer(IPC::Vec<DistantStatic>& distantStatics, IPC::Vec<DistantSubset>& distantSubsets, IDirect3DDevice9Ex* device);
     static void loadVisGroupsServer(HANDLE h);
     static HANDLE beginReadStatics();
 

@@ -318,7 +318,7 @@ bool DistantLand::initIpc() {
     dynVisFlagsSharedId = dynVisVec.id();
     dynVisFlagsShared = dynVisVec;
 
-    return true;
+    return ipcClient.initOcclusionBlocking(device);
 }
 
 bool DistantLand::reloadShaders() {

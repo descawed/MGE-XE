@@ -66,7 +66,7 @@ HANDLE DistantLandShare::beginReadStatics() {
     return h;
 }
 
-bool DistantLandShare::initDistantStaticsServer(IPC::Vec<DistantStatic>& distantStatics, IPC::Vec<DistantSubset>& distantSubsets) {
+bool DistantLandShare::initDistantStaticsServer(IPC::Vec<DistantStatic>& distantStatics, IPC::Vec<DistantSubset>& distantSubsets, IDirect3DDevice9Ex* device) {
     if (GetFileAttributes("Data Files\\distantland\\statics") == INVALID_FILE_ATTRIBUTES) {
         LOG::logline("!! Distant statics have not been generated");
         LOG::flush();
@@ -82,6 +82,19 @@ bool DistantLandShare::initDistantStaticsServer(IPC::Vec<DistantStatic>& distant
     readDistantStatics(h, distantStatics, distantSubsets, dynamicVisGroupsServer);
 
     CloseHandle(h);
+
+    // generate occlusion boxes for statics
+    bool success = true;
+    for (auto& pair : mapWorldSpaces) {
+        auto& worldspace = pair.second;
+        success = success && worldspace.NearStatics.get()->CreateOcclusionBoxes(device);
+        success = success && worldspace.FarStatics.get()->CreateOcclusionBoxes(device);
+        success = success && worldspace.VeryFarStatics.get()->CreateOcclusionBoxes(device);
+
+        if (!success) {
+            return false;
+        }
+    }
 
     return true;
 }

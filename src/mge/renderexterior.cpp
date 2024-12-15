@@ -114,6 +114,7 @@ void DistantLand::renderDistantLand(ID3DXEffect* e, const D3DXMATRIX* view, cons
     
     if (Configuration.UseSharedMemory) {
         visLandShared.Render(device, SIZEOFLANDVERT, true);
+        ipcClient.generateOcclusionMask(visLandSharedId, *view, *proj);
     } else {
         visLand.Render(device, SIZEOFLANDVERT);
     }
