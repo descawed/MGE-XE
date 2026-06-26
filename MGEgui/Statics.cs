@@ -270,6 +270,44 @@ namespace MGEgui {
             return (Control[])controls.ToArray(typeof(Control));
         }
 
+        /* Per-user VirtualStore location for the Morrowind key. Morrowind, its
+           launcher and the injected d3d8/dinput8 shims are all 32-bit and run
+           unelevated, so the OS UAC registry virtualization redirects their
+           HKLM writes here (under HKCU, which is user-writable). This is where
+           the game's live settings actually live. MGEXEgui used to be 32-bit and
+           got the same redirection transparently; as a 64-bit process it gets no
+           virtualization, so it must target this location explicitly to both
+           avoid the access-denied crash and stay interoperable with the game. */
+        private const string reg_mw_virtualStore =
+            @"Software\Classes\VirtualStore\MACHINE\SOFTWARE\Wow6432Node\Bethesda Softworks\Morrowind";
+
+        /// <summary>
+        /// Opens the Morrowind settings key the way an unelevated 32-bit process
+        /// would have seen it under registry virtualization: the per-user
+        /// VirtualStore takes precedence, falling back to the real 32-bit HKLM view.
+        /// Returns null only if neither exists (read-only, first run).
+        /// </summary>
+        public static RegistryKey OpenMorrowindRegistryKey(bool writable) {
+            if (writable) {
+                // Unelevated writes go to the user-writable VirtualStore.
+                return Registry.CurrentUser.CreateSubKey(reg_mw_virtualStore);
+            }
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(reg_mw_virtualStore, false);
+            if (key != null) {
+                return key;
+            }
+            RegistryKey hklm = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry32);
+            return hklm.OpenSubKey(reg_mw, false);
+        }
+
+        /// <summary>
+        /// Creates (or opens) the Morrowind settings key for writing, in the
+        /// per-user VirtualStore. See <see cref="OpenMorrowindRegistryKey"/>.
+        /// </summary>
+        public static RegistryKey CreateMorrowindRegistryKey() {
+            return Registry.CurrentUser.CreateSubKey(reg_mw_virtualStore);
+        }
+
         /// <summary>
         /// Entry point for this program
         /// </summary>

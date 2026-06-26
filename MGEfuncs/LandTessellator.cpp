@@ -103,7 +103,7 @@ public:
             return false;
         }
 
-        DWORD unused, mesh_count = meshes.size();
+        DWORD unused, mesh_count = (DWORD)meshes.size();
         if (GetFileSize(file, NULL) > 0) {
             DWORD existing_count;
             ReadFile(file, &existing_count, sizeof(existing_count), &unused, 0);
@@ -127,8 +127,8 @@ public:
     bool Save(HANDLE& file) {
         DWORD verts, faces, unused;
         bool large;
-        verts = vertices.size();
-        faces = triangles.size();
+        verts = (DWORD)vertices.size();
+        faces = (DWORD)triangles.size();
 
         WriteFile(file, &radius, 4, &unused, 0);
         WriteFile(file, &center, 12, &unused, 0);

@@ -47,18 +47,25 @@ namespace MGEgui.DirectX {
         }
 
         public static bool CheckAdapter() {
-            object value = Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Bethesda Softworks\Morrowind", "Adapter", 0);
-            adapter = (value != null) ? (int)value : 0;
+            using (Microsoft.Win32.RegistryKey key = Statics.OpenMorrowindRegistryKey(false)) {
+                object value = (key != null) ? key.GetValue("Adapter", 0) : 0;
+                adapter = (value != null) ? (int)value : 0;
+            }
             return adapter < d3d.AdapterCount;
         }
-        
+
         public static void ResetAdapter() {
             adapter = 0;
-            Microsoft.Win32.Registry.SetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Bethesda Softworks\Morrowind", "Adapter", adapter);
+            using (Microsoft.Win32.RegistryKey key = Statics.CreateMorrowindRegistryKey()) {
+                key.SetValue("Adapter", adapter);
+            }
         }
 
         public static void GetDeviceCaps() {
-            object value = Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Bethesda Softworks\Morrowind", "Adapter", 0);
+            object value;
+            using (Microsoft.Win32.RegistryKey key = Statics.OpenMorrowindRegistryKey(false)) {
+                value = (key != null) ? key.GetValue("Adapter", 0) : 0;
+            }
             adapter = (value != null) ? (int)value : 0;
 
             if (d3d.AdapterCount <= adapter) {

@@ -244,7 +244,7 @@ namespace MGEgui {
 
         public static bool ShowDialog(out Point p, out int refresh, bool Windowed) {
             // Fetch data from the registry
-            RegistryKey key = Registry.LocalMachine.OpenSubKey(@"Software\Bethesda Softworks\Morrowind");
+            RegistryKey key = Statics.OpenMorrowindRegistryKey(false);
             if (key != null) {
                 sWidth = (int)key.GetValue("Screen Width", 1280);
                 sHeight = (int)key.GetValue("Screen Height", 720);
@@ -270,7 +270,7 @@ namespace MGEgui {
             if (rf.ShowDialog() == DialogResult.OK) {
                 // Write new data to the registry
                 try {
-                    key = Registry.LocalMachine.OpenSubKey(@"Software\Bethesda Softworks\Morrowind", true);
+                    key = Statics.OpenMorrowindRegistryKey(true);
                     if (key == null) {
                         throw new ArgumentNullException();
                     }

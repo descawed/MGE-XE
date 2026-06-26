@@ -634,7 +634,7 @@ namespace MGEgui {
             iniFile.setKey("PPLightingFlags", cmbPerPixelLightFlags.SelectedIndex);
             iniFile.save();
             try {
-                RegistryKey key = Registry.LocalMachine.OpenSubKey(Statics.reg_mw, true);
+                RegistryKey key = Statics.OpenMorrowindRegistryKey(true);
                 if (key != null) {
                     key.SetValue("Pixelshader", new byte [] { Convert.ToByte(cbDisableMGE.Checked) });
                     key.Close();
@@ -935,7 +935,7 @@ namespace MGEgui {
         }
 
         private void LoadSettings() {
-            RegistryKey key = Registry.LocalMachine.CreateSubKey(Statics.reg_mw);
+            RegistryKey key = Statics.CreateMorrowindRegistryKey();
             int width, height;
             try {
                 width = (int)key.GetValue("Screen Width");
@@ -1037,7 +1037,7 @@ namespace MGEgui {
         private void cbWindowed_CheckedChanged(object sender, EventArgs e) {
             RegistryKey key = null;
             try {
-                key = Registry.LocalMachine.OpenSubKey(Statics.reg_mw, true);
+                key = Statics.OpenMorrowindRegistryKey(true);
                 if (key != null) {
                     key.SetValue("Fullscreen", new byte [] { Convert.ToByte(!cbWindowed.Checked) });
                     key.Close();
@@ -1418,7 +1418,7 @@ namespace MGEgui {
         private void UpdateFOV() {
             if (cbAutoFOV.Checked) {
                 try {
-                    RegistryKey key = Registry.LocalMachine.OpenSubKey(Statics.reg_mw);
+                    RegistryKey key = Statics.OpenMorrowindRegistryKey(false);
 
                     // Morrowind standard horizontal FOV is 75 degrees at 4:3 aspect ratio
                     const double basefov = 75.0 * Math.PI / 180.0;
